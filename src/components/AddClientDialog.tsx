@@ -35,6 +35,7 @@ export default function AddClientDialog({ open, onOpenChange, onClientAdded }: A
   
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
+  const [telegram, setTelegram] = useState('');
   const [coordinatorId, setCoordinatorId] = useState('');
   const [arrivalDate, setArrivalDate] = useState('');
   const [departureDate, setDepartureDate] = useState('');
@@ -67,6 +68,15 @@ export default function AddClientDialog({ open, onOpenChange, onClientAdded }: A
       return;
     }
 
+    if (telegram && !telegram.startsWith('@')) {
+      toast({
+        title: 'Validation Error',
+        description: 'Telegram username must start with @',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     if (!departureDate) {
       toast({
         title: 'Validation Error',
@@ -78,15 +88,21 @@ export default function AddClientDialog({ open, onOpenChange, onClientAdded }: A
 
     setLoading(true);
 
-    const { error } = await supabase
+    // Get coordinator name for webhook
+    const coordinator = coordinators.find(c => c.id === coordinatorId);
+
+    const { data: newClient, error } = await supabase
       .from('clients')
       .insert({
         name: name.trim(),
         phone: phone.trim() || null,
+        telegram_username: telegram.trim() || null,
         coordinator_id: coordinatorId || null,
         arrival_date: arrivalDate || null,
         departure_date: departureDate,
-      });
+      })
+      .select()
+      .single();
 
     setLoading(false);
 
@@ -97,6 +113,29 @@ export default function AddClientDialog({ open, onOpenChange, onClientAdded }: A
         variant: 'destructive',
       });
     } else {
+      // Trigger n8n webhook for new client welcome message
+      try {
+        const webhookResponse = await fetch('https://arbaaznwz.app.n8n.cloud/webhook-test/new-client-webhook', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            client_id: newClient.id,
+            client_name: name.trim(),
+            client_phone: phone.trim() || null,
+            client_telegram: telegram.trim() || null,
+            coordinator_name: coordinator?.full_name || null,
+            arrival_date: arrivalDate || null,
+            departure_date: departureDate,
+            created_at: newClient.created_at,
+          }),
+        });
+        console.log('n8n webhook triggered successfully:', webhookResponse.status);
+      } catch (webhookError) {
+        console.error('Failed to trigger n8n webhook:', webhookError);
+      }
+
       toast({
         title: 'Client Added',
         description: 'Client and milestones have been created successfully.',
@@ -105,6 +144,7 @@ export default function AddClientDialog({ open, onOpenChange, onClientAdded }: A
       // Reset form
       setName('');
       setPhone('');
+      setTelegram('');
       setCoordinatorId('');
       setArrivalDate('');
       setDepartureDate('');
@@ -152,6 +192,18 @@ export default function AddClientDialog({ open, onOpenChange, onClientAdded }: A
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
             />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="telegram">Telegram Username (Optional)</Label>
+            <Input
+              id="telegram"
+              type="text"
+              placeholder="@username"
+              value={telegram}
+              onChange={(e) => setTelegram(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">Client's Telegram handle for automated updates</p>
           </div>
 
           <div className="space-y-2">
